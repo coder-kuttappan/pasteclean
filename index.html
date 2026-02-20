@@ -1,0 +1,1079 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Paste Clean — Fix What You Paste</title>
+    <meta name="description" content="Smart paste cleaner. Pick where you copied from, where you're pasting to — get perfectly cleaned text.">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/turndown/dist/turndown.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/turndown-plugin-gfm/dist/turndown-plugin-gfm.js"></script>
+    <script>
+        // Apply theme before paint to prevent flash
+        (function() {
+            const saved = localStorage.getItem('pasteclean-theme');
+            const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            if (saved === 'dark' || (!saved && prefersDark)) {
+                document.documentElement.classList.add('dark');
+            }
+        })();
+
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        accent: '#6c63ff',
+                        accentHover: '#7b73ff',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        * { box-sizing: border-box; }
+        textarea { resize: none; }
+        textarea:focus, button:focus { outline: none; }
+        .tab-active { background: #6c63ff; color: white; }
+
+        /* Light theme tabs */
+        .tab-inactive { background: #f3f4f6; color: #6b7280; }
+        .tab-inactive:hover { background: #e5e7eb; color: #374151; }
+        /* Dark theme tabs */
+        html.dark .tab-inactive { background: #1f2937; color: #9ca3af; }
+        html.dark .tab-inactive:hover { background: #374151; color: #e5e7eb; }
+
+        .copy-flash { animation: flash 0.6s ease-out; }
+        @keyframes flash { 0% { background: #6c63ff; } 100% { background: transparent; } }
+        ::selection { background: #6c63ff44; }
+        @keyframes slideDown {
+            from { opacity: 0; max-height: 0; padding-top: 0; padding-bottom: 0; margin-bottom: 0; }
+            to { opacity: 1; max-height: 60px; padding-top: 0.5rem; padding-bottom: 0.5rem; margin-bottom: 0.75rem; }
+        }
+        @keyframes slideUp {
+            from { opacity: 1; max-height: 60px; }
+            to { opacity: 0; max-height: 0; padding-top: 0; padding-bottom: 0; margin-bottom: 0; }
+        }
+        .banner-enter { animation: slideDown 0.3s ease-out forwards; overflow: hidden; }
+        .banner-exit { animation: slideUp 0.2s ease-in forwards; overflow: hidden; }
+
+        /* HTML preview — always light (simulates target app) */
+        .html-preview { background: #fff; color: #222; }
+        .html-preview h1 { font-size: 1.5em; font-weight: bold; margin: 0.5em 0; }
+        .html-preview h2 { font-size: 1.3em; font-weight: bold; margin: 0.5em 0; }
+        .html-preview h3 { font-size: 1.1em; font-weight: bold; margin: 0.5em 0; }
+        .html-preview p { margin: 0.4em 0; }
+        .html-preview ul { list-style: disc; padding-left: 1.5em; margin: 0.4em 0; }
+        .html-preview ol { list-style: decimal; padding-left: 1.5em; margin: 0.4em 0; }
+        .html-preview li { margin: 0.2em 0; }
+        .html-preview code { background: #f0f0f0; padding: 0.15em 0.4em; border-radius: 3px; font-size: 0.9em; }
+        .html-preview pre { background: #f0f0f0; padding: 1em; border-radius: 6px; overflow-x: auto; margin: 0.5em 0; }
+        .html-preview pre code { background: none; padding: 0; }
+        .html-preview blockquote { border-left: 3px solid #ccc; padding-left: 1em; color: #555; margin: 0.5em 0; }
+        .html-preview a { color: #1a73e8; text-decoration: underline; }
+        .html-preview strong { font-weight: bold; }
+        .html-preview em { font-style: italic; }
+        .html-preview table { border-collapse: collapse; margin: 0.5em 0; width: 100%; }
+        .html-preview th, .html-preview td { border: 1px solid #ccc; padding: 0.4em 0.8em; text-align: left; }
+        .html-preview th { background: #f5f5f5; font-weight: 600; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center px-4 py-8 md:py-12 bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 transition-colors">
+
+    <!-- Header -->
+    <div class="w-full max-w-3xl mb-8">
+        <div class="flex items-center gap-3 mb-2">
+            <h1 class="text-2xl md:text-3xl font-bold tracking-tight">Paste Clean</h1>
+            <span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400">beta</span>
+            <div class="flex-1"></div>
+            <button onclick="toggleTheme()" id="theme-toggle" class="p-2 rounded-lg text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-all" title="Toggle dark/light mode">
+                <!-- Sun icon (shown in dark mode) -->
+                <svg id="icon-sun" class="w-5 h-5 hidden" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+                <!-- Moon icon (shown in light mode) -->
+                <svg id="icon-moon" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+            </button>
+        </div>
+        <p class="text-gray-500 dark:text-gray-400 text-sm md:text-base">Paste anything. We detect the source and clean it for wherever it's going.</p>
+    </div>
+
+    <!-- Input tabs (source) -->
+    <div class="w-full max-w-3xl mb-1">
+        <span class="text-xs text-gray-400 dark:text-gray-500 mb-1.5 block">Copied from:</span>
+        <div class="flex flex-wrap gap-1.5">
+            <button onclick="setInputMode('general')" id="in-general" class="tab-active px-3 py-1.5 rounded-lg text-sm font-medium transition-all">General</button>
+            <button onclick="setInputMode('outlook')" id="in-outlook" class="tab-inactive px-3 py-1.5 rounded-lg text-sm font-medium transition-all">Outlook</button>
+            <button onclick="setInputMode('gmail')" id="in-gmail" class="tab-inactive px-3 py-1.5 rounded-lg text-sm font-medium transition-all">Gmail</button>
+            <button onclick="setInputMode('word')" id="in-word" class="tab-inactive px-3 py-1.5 rounded-lg text-sm font-medium transition-all">Word</button>
+            <button onclick="setInputMode('pdf')" id="in-pdf" class="tab-inactive px-3 py-1.5 rounded-lg text-sm font-medium transition-all">PDF</button>
+            <button onclick="setInputMode('excel')" id="in-excel" class="tab-inactive px-3 py-1.5 rounded-lg text-sm font-medium transition-all">Excel / Sheets</button>
+            <button onclick="setInputMode('markdown')" id="in-markdown" class="tab-inactive px-3 py-1.5 rounded-lg text-sm font-medium transition-all">Markdown</button>
+        </div>
+    </div>
+
+    <!-- Auto-detect suggestion banner -->
+    <div id="suggestion-banner" class="w-full max-w-3xl hidden">
+        <div class="flex items-center gap-3 bg-indigo-50 dark:bg-gray-800 border border-indigo-200 dark:border-gray-600 rounded-lg px-4 py-2 text-sm">
+            <span id="suggestion-text" class="text-gray-600 dark:text-gray-300 flex-1"></span>
+            <button onclick="acceptSuggestion()" id="suggestion-accept" class="px-3 py-1 rounded-md text-xs font-medium bg-accent text-white hover:bg-accentHover transition-all">Switch</button>
+            <button onclick="dismissSuggestion()" class="px-3 py-1 rounded-md text-xs font-medium text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-all">Dismiss</button>
+        </div>
+    </div>
+
+    <!-- Input -->
+    <div class="w-full max-w-3xl mb-3 mt-3">
+        <div class="relative">
+            <textarea
+                id="input"
+                class="w-full h-48 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl p-4 text-gray-900 dark:text-gray-100 text-sm font-mono placeholder-gray-400 dark:placeholder-gray-600 focus:border-accent transition-colors"
+                placeholder="Paste your text here..."
+            ></textarea>
+        </div>
+    </div>
+
+    <!-- Output tabs (destination) + actions -->
+    <div class="w-full max-w-3xl mb-1 flex items-center gap-2 flex-wrap">
+        <span class="text-xs text-gray-400 dark:text-gray-500 mr-1">Pasting to:</span>
+        <button onclick="setOutputMode('markdown')" id="out-markdown" class="tab-active px-3 py-1.5 rounded-lg text-xs font-medium transition-all">Markdown</button>
+        <button onclick="setOutputMode('outlook')" id="out-outlook" class="tab-inactive px-3 py-1.5 rounded-lg text-xs font-medium transition-all">Outlook</button>
+        <button onclick="setOutputMode('gmail')" id="out-gmail" class="tab-inactive px-3 py-1.5 rounded-lg text-xs font-medium transition-all">Gmail</button>
+        <button onclick="setOutputMode('word')" id="out-word" class="tab-inactive px-3 py-1.5 rounded-lg text-xs font-medium transition-all">Word</button>
+        <div class="flex-1"></div>
+        <button onclick="clearAll()" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-all">
+            Clear
+        </button>
+        <button onclick="copyOutput()" id="btn-copy" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-accent text-white hover:bg-accentHover transition-all">
+            Copy
+        </button>
+    </div>
+
+    <!-- Font/size overrides (shown for Word/Outlook/Gmail output) -->
+    <div id="font-overrides" class="w-full max-w-3xl mb-3 mt-2 hidden">
+        <div class="flex items-center gap-3 text-xs">
+            <span class="text-gray-400 dark:text-gray-500">Font:</span>
+            <select id="font-family" onchange="renderOutput()" class="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 rounded-md px-2 py-1 text-xs">
+                <option value="">Match app default</option>
+                <option value="Calibri,sans-serif">Calibri</option>
+                <option value="Arial,sans-serif">Arial</option>
+                <option value="Aptos,sans-serif">Aptos</option>
+                <option value="Times New Roman,serif">Times New Roman</option>
+                <option value="Verdana,sans-serif">Verdana</option>
+                <option value="Segoe UI,sans-serif">Segoe UI</option>
+            </select>
+            <span class="text-gray-400 dark:text-gray-500">Size:</span>
+            <select id="font-size" onchange="renderOutput()" class="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 rounded-md px-2 py-1 text-xs">
+                <option value="">Match app default</option>
+                <option value="10pt">10pt</option>
+                <option value="11pt">11pt</option>
+                <option value="12pt">12pt</option>
+                <option value="14pt">14pt</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- Output -->
+    <div class="w-full max-w-3xl mb-6">
+        <textarea
+            id="output-text"
+            class="w-full h-48 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl p-4 text-gray-900 dark:text-gray-100 text-sm font-mono placeholder-gray-400 dark:placeholder-gray-600 focus:border-accent transition-colors"
+            placeholder="Cleaned text appears here..."
+        ></textarea>
+        <div id="output-html" class="hidden w-full min-h-[12rem] border border-gray-200 dark:border-gray-700 rounded-xl p-4 text-sm html-preview"></div>
+        <p id="output-hint" class="hidden text-xs text-gray-400 dark:text-gray-500 mt-2"></p>
+    </div>
+
+    <!-- Stats -->
+    <div id="stats" class="w-full max-w-3xl mb-8 hidden">
+        <div class="flex gap-4 text-xs text-gray-400 dark:text-gray-500">
+            <span id="stat-mode"></span>
+            <span id="stat-changes"></span>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="w-full max-w-3xl mt-auto pt-8 border-t border-gray-200 dark:border-gray-800">
+        <div class="flex flex-col md:flex-row justify-between items-center gap-2 text-xs text-gray-400 dark:text-gray-500">
+            <span>Built by <a href="https://github.com/coderkuttappan" class="text-accent hover:underline">Coder Kuttappan</a></span>
+            <span>All processing happens in your browser. Nothing is sent anywhere.</span>
+        </div>
+    </div>
+
+<script>
+// ============================================================================
+// CONFIG
+// ============================================================================
+
+const INPUT_MODES = ['general', 'outlook', 'gmail', 'word', 'pdf', 'excel', 'markdown'];
+const OUTPUT_MODES = ['markdown', 'outlook', 'gmail', 'word'];
+
+// Input→Output conflicts: when input is X, hide X from output
+const INPUT_OUTPUT_CONFLICTS = {
+    outlook: ['outlook'],
+    gmail: ['gmail'],
+    word: ['word'],
+    markdown: ['markdown'],
+};
+
+const INPUT_LABELS = {
+    general: 'General',
+    outlook: 'Outlook',
+    gmail: 'Gmail',
+    word: 'Word',
+    pdf: 'PDF',
+    excel: 'Excel / Sheets',
+    markdown: 'Markdown',
+};
+
+const OUTPUT_LABELS = {
+    markdown: 'Markdown',
+    outlook: 'Outlook',
+    gmail: 'Gmail',
+    word: 'Word',
+};
+
+// ============================================================================
+// STATE
+// ============================================================================
+
+let currentInputMode = 'general';
+let currentOutputMode = 'markdown';
+let pastedHTML = '';
+let pastedPlain = '';
+let intermediateMarkdown = '';
+let formattedOutput = '';
+let formattedHTML = '';
+let suggestedMode = null;
+let suggestionDismissed = false;
+
+// ============================================================================
+// THEME
+// ============================================================================
+
+function toggleTheme() {
+    const isDark = document.documentElement.classList.toggle('dark');
+    localStorage.setItem('pasteclean-theme', isDark ? 'dark' : 'light');
+    updateThemeIcons();
+}
+
+function updateThemeIcons() {
+    const isDark = document.documentElement.classList.contains('dark');
+    document.getElementById('icon-sun').classList.toggle('hidden', !isDark);
+    document.getElementById('icon-moon').classList.toggle('hidden', isDark);
+}
+
+// Listen for system theme changes (only if no manual override)
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+    if (!localStorage.getItem('pasteclean-theme')) {
+        document.documentElement.classList.toggle('dark', e.matches);
+        updateThemeIcons();
+    }
+});
+
+// ============================================================================
+// UI — MODE SWITCHING
+// ============================================================================
+
+function setInputMode(mode) {
+    currentInputMode = mode;
+    suggestionDismissed = false;
+    suggestedMode = null;
+    hideSuggestionBanner();
+
+    INPUT_MODES.forEach(m => {
+        const el = document.getElementById(`in-${m}`);
+        el.className = m === mode
+            ? 'tab-active px-3 py-1.5 rounded-lg text-sm font-medium transition-all'
+            : 'tab-inactive px-3 py-1.5 rounded-lg text-sm font-medium transition-all';
+    });
+
+    applyOutputConstraints();
+    runPipeline();
+}
+
+function setOutputMode(mode) {
+    currentOutputMode = mode;
+
+    // Style ALL tabs including hidden ones — so when a hidden tab is later
+    // unhidden (constraint change), it doesn't still have tab-active styling
+    OUTPUT_MODES.forEach(m => {
+        const el = document.getElementById(`out-${m}`);
+        const isHidden = el.classList.contains('hidden');
+        el.className = m === mode
+            ? 'tab-active px-3 py-1.5 rounded-lg text-xs font-medium transition-all'
+            : 'tab-inactive px-3 py-1.5 rounded-lg text-xs font-medium transition-all';
+        if (isHidden) el.classList.add('hidden');
+    });
+
+    // Show font overrides for Word/Outlook/Gmail
+    const fontRow = document.getElementById('font-overrides');
+    if (mode === 'word' || mode === 'outlook' || mode === 'gmail') {
+        fontRow.classList.remove('hidden');
+        // Reset to "Match app default" when switching output tabs
+        document.getElementById('font-family').value = '';
+        document.getElementById('font-size').value = '';
+    } else {
+        fontRow.classList.add('hidden');
+    }
+
+    renderOutput();
+}
+
+function applyOutputConstraints() {
+    const conflicts = INPUT_OUTPUT_CONFLICTS[currentInputMode] || [];
+    let needSwitch = false;
+
+    OUTPUT_MODES.forEach(m => {
+        const el = document.getElementById(`out-${m}`);
+        if (conflicts.includes(m)) {
+            el.classList.add('hidden');
+            if (currentOutputMode === m) needSwitch = true;
+        } else {
+            el.classList.remove('hidden');
+        }
+    });
+
+    if (needSwitch) {
+        // Find first visible output mode
+        const firstVisible = OUTPUT_MODES.find(m => !conflicts.includes(m));
+        setOutputMode(firstVisible || 'markdown');
+    }
+}
+
+// ============================================================================
+// UI — AUTO-DETECT SUGGESTION BANNER
+// ============================================================================
+
+function showSuggestionBanner(detected) {
+    if (detected === currentInputMode || suggestionDismissed) return;
+    suggestedMode = detected;
+    const banner = document.getElementById('suggestion-banner');
+    const text = document.getElementById('suggestion-text');
+    text.textContent = `This looks like ${INPUT_LABELS[detected]} text.`;
+    document.getElementById('suggestion-accept').textContent = `Switch to ${INPUT_LABELS[detected]}`;
+    banner.classList.remove('hidden', 'banner-exit');
+    banner.classList.add('banner-enter');
+}
+
+function hideSuggestionBanner() {
+    const banner = document.getElementById('suggestion-banner');
+    if (!banner.classList.contains('hidden')) {
+        banner.classList.remove('banner-enter');
+        banner.classList.add('banner-exit');
+        setTimeout(() => {
+            banner.classList.add('hidden');
+            banner.classList.remove('banner-exit');
+        }, 200);
+    }
+}
+
+function acceptSuggestion() {
+    if (suggestedMode) {
+        setInputMode(suggestedMode);
+    }
+}
+
+function dismissSuggestion() {
+    suggestionDismissed = true;
+    hideSuggestionBanner();
+}
+
+// ============================================================================
+// AUTO-DETECT — Source detection from HTML and plain text signals
+// ============================================================================
+
+function detectSource(html, plain) {
+    if (html) {
+        // Order matters: check specific apps before generic MSO
+        // (Excel and Gmail can both contain MSO markup)
+
+        // 1. Excel: explicit Excel namespace, or table-heavy MSO content
+        if (/xmlns:x="urn:schemas-microsoft-com:office:excel"|ProgId.*Excel/i.test(html)) {
+            return 'excel';
+        }
+        // Table-dominant content from any spreadsheet app
+        if (/<table[\s>]/i.test(html) && (/<tr[\s>].*<tr[\s>]/is.test(html))) {
+            const cellCount = (html.match(/<td[\s>]/gi) || []).length;
+            const paraCount = (html.match(/<p[\s>]/gi) || []).length;
+            // If cells vastly outnumber paragraphs, it's a spreadsheet
+            if (cellCount >= 4 && cellCount > paraCount * 2) return 'excel';
+        }
+
+        // 2. Gmail: check before MSO because Gmail can wrap Outlook-authored emails
+        if (/class="?gmail_|data-smartmail|googlequote/i.test(html)) {
+            return 'gmail';
+        }
+
+        // 3. Word vs Outlook (both produce MSO markup)
+        if (/class="?Mso|<o:p>|xmlns:o="urn:schemas-microsoft-com/i.test(html)) {
+            if (/class="?MsoHeading|class="?MsoToc|ProgId.*Word/i.test(html)) {
+                return 'word';
+            }
+            return 'outlook';
+        }
+    }
+
+    if (plain) {
+        const trimmed = plain.trim();
+        const lines = trimmed.split('\n');
+
+        const tsvLines = lines.filter(l => l.includes('\t') && l.split('\t').length >= 3);
+        if (lines.length >= 2 && tsvLines.length / lines.length > 0.5) {
+            return 'excel';
+        }
+
+        const mdSignals = [
+            /^#{1,6}\s/m, /\*\*[^*]+\*\*/, /^\s*[-*+]\s/m,
+            /^\s*\d+\.\s/m, /\[.+\]\(.+\)/, /^```/m, /^>\s/m,
+        ];
+        if (mdSignals.filter(r => r.test(trimmed)).length >= 2) {
+            return 'markdown';
+        }
+
+        const pdfSignals = lines.filter((l, i) => {
+            if (i >= lines.length - 1) return false;
+            const next = lines[i + 1];
+            return l.length > 20 && l.length < 80 &&
+                   !/[.!?:;]$/.test(l) &&
+                   next && /^[a-z]/.test(next.trim());
+        });
+        if (lines.length >= 4 && pdfSignals.length / lines.length > 0.3) {
+            return 'pdf';
+        }
+
+        if (/\u00E2\u20AC[\u201C\u201D\u2122\u02DC\u0153\u009D\u00A2\u00A6]|\u00C2[\u00A0\u00A3\u00A9\u00AE\u00B0\u00B7\u00BD]/.test(trimmed)) {
+            return 'outlook';
+        }
+    }
+
+    return null;
+}
+
+// ============================================================================
+// INPUT NORMALIZERS
+// ============================================================================
+
+function normalizeGeneral(text) {
+    let r = text;
+    r = fixMojibake(r);
+    r = r.replace(/[\u200B\u200C\u200D\uFEFF]/g, '');
+    r = r.replace(/\u00A0/g, ' ');
+    r = r.split('\n').map(line => {
+        const m = line.match(/^(\s*)(.*)/);
+        return m[1] + m[2].replace(/ {2,}/g, ' ');
+    }).join('\n');
+    r = r.split('\n').map(l => l.trimEnd()).join('\n');
+    r = r.replace(/\n{3,}/g, '\n\n');
+    return r.trim();
+}
+
+function normalizeMSO(html, source) {
+    let doc = new DOMParser().parseFromString(html, 'text/html');
+
+    const walker = document.createTreeWalker(doc.body, NodeFilter.SHOW_COMMENT);
+    const commentsToRemove = [];
+    while (walker.nextNode()) {
+        commentsToRemove.push(walker.currentNode);
+    }
+    commentsToRemove.forEach(c => c.parentNode.removeChild(c));
+
+    doc.querySelectorAll('o\\:p').forEach(el => {
+        while (el.firstChild) el.parentNode.insertBefore(el.firstChild, el);
+        el.parentNode.removeChild(el);
+    });
+
+    doc.querySelectorAll('[style]').forEach(el => {
+        const style = el.getAttribute('style');
+        const cleaned = style.split(';')
+            .filter(s => !s.trim().startsWith('mso-'))
+            .join(';');
+        if (cleaned.trim()) {
+            el.setAttribute('style', cleaned);
+        } else {
+            el.removeAttribute('style');
+        }
+    });
+
+    const listParas = doc.querySelectorAll('.MsoListParagraph, [class*="MsoList"]');
+    if (listParas.length > 0) {
+        convertMsoListsToReal(doc, listParas);
+    }
+
+    if (source === 'word') {
+        for (let level = 1; level <= 6; level++) {
+            doc.querySelectorAll(`.MsoHeading${level}, [class*="MsoHeading${level}"]`).forEach(el => {
+                const heading = doc.createElement(`h${level}`);
+                heading.innerHTML = el.innerHTML;
+                el.parentNode.replaceChild(heading, el);
+            });
+        }
+    }
+
+    doc.querySelectorAll('[class]').forEach(el => el.removeAttribute('class'));
+    doc.querySelectorAll('span').forEach(el => {
+        if (!el.textContent.trim() && !el.querySelector('img')) {
+            el.parentNode.removeChild(el);
+        }
+    });
+
+    const md = htmlToMarkdown(doc.body.innerHTML);
+    return normalizeGeneral(md);
+}
+
+function convertMsoListsToReal(doc, listParas) {
+    let currentList = null;
+    let lastParent = null;
+
+    listParas.forEach(para => {
+        const text = para.textContent.trim();
+        const isNumbered = /^\d+[.)]\s/.test(text) || /level\d.*decimal/i.test(para.getAttribute('style') || '');
+        const listTag = isNumbered ? 'ol' : 'ul';
+
+        const parent = para.parentNode;
+        if (!currentList || lastParent !== parent || currentList.tagName.toLowerCase() !== listTag) {
+            currentList = doc.createElement(listTag);
+            parent.insertBefore(currentList, para);
+            lastParent = parent;
+        }
+
+        const li = doc.createElement('li');
+        let content = para.innerHTML;
+        const tempDiv = doc.createElement('div');
+        tempDiv.innerHTML = content;
+        const firstText = tempDiv.firstChild;
+        if (firstText && firstText.nodeType === 3) {
+            firstText.textContent = firstText.textContent.replace(/^[\s\u00A0]*[•·○►▪▸‣–\-]\s*/, '');
+            firstText.textContent = firstText.textContent.replace(/^[\s\u00A0]*\d+[.)]\s*/, '');
+        }
+        li.innerHTML = tempDiv.innerHTML;
+        currentList.appendChild(li);
+        parent.removeChild(para);
+    });
+}
+
+function normalizeGmail(html) {
+    let doc = new DOMParser().parseFromString(html, 'text/html');
+
+    doc.querySelectorAll('.gmail_signature, [data-smartmail="gmail_signature"]').forEach(el => {
+        el.parentNode.removeChild(el);
+    });
+
+    doc.querySelectorAll('[class*="gmail_"]').forEach(el => {
+        el.removeAttribute('class');
+    });
+
+    doc.querySelectorAll('div').forEach(div => {
+        const hasBlockChildren = div.querySelector('div, p, ul, ol, table, blockquote, h1, h2, h3, h4, h5, h6');
+        if (!hasBlockChildren && div.textContent.trim()) {
+            const p = doc.createElement('p');
+            p.innerHTML = div.innerHTML;
+            div.parentNode.replaceChild(p, div);
+        }
+    });
+
+    doc.querySelectorAll('[style]').forEach(el => el.removeAttribute('style'));
+    doc.querySelectorAll('[class]').forEach(el => el.removeAttribute('class'));
+
+    const md = htmlToMarkdown(doc.body.innerHTML);
+    return normalizeGeneral(md);
+}
+
+function normalizePDF(text) {
+    let r = text;
+    r = r.replace(/(\w)-\n(\w)/g, '$1$2');
+
+    const lines = r.split('\n');
+    const merged = [];
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const next = lines[i + 1];
+
+        if (!next || !line.trim()) {
+            merged.push(line);
+            continue;
+        }
+
+        const trimmedLine = line.trim();
+        const trimmedNext = next.trim();
+
+        if (/^[\s]*[-*•·]\s/.test(line) || /^[\s]*\d+[.)]\s/.test(line)) {
+            merged.push(line);
+            continue;
+        }
+        if (trimmedLine.length < 20) {
+            merged.push(line);
+            continue;
+        }
+        if (/^[A-Z]/.test(trimmedNext) && /[.!?:;]$/.test(trimmedLine)) {
+            merged.push(line);
+            continue;
+        }
+        if (!trimmedNext) {
+            merged.push(line);
+            continue;
+        }
+        if (/[.!?]$/.test(trimmedLine)) {
+            merged.push(line);
+            continue;
+        }
+        if (/^[a-z]/.test(trimmedNext)) {
+            merged.push(trimmedLine + ' ' + trimmedNext);
+            i++;
+            continue;
+        }
+
+        merged.push(line);
+    }
+
+    r = merged.join('\n');
+    r = r.replace(/ {2,}/g, ' ');
+    return normalizeGeneral(r);
+}
+
+function normalizeExcel(html, plain) {
+    if (html && /<table[\s>]/i.test(html)) {
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const table = doc.querySelector('table');
+        if (table) {
+            return tableElementToMarkdown(table);
+        }
+    }
+
+    if (plain) {
+        return tsvToMarkdownTable(plain);
+    }
+
+    return normalizeGeneral(plain || '');
+}
+
+function tableElementToMarkdown(table) {
+    const rows = [];
+    table.querySelectorAll('tr').forEach(tr => {
+        const cells = [];
+        tr.querySelectorAll('td, th').forEach(cell => {
+            cells.push(cell.textContent.trim().replace(/\|/g, '\\|'));
+        });
+        rows.push(cells);
+    });
+    return buildMarkdownTable(rows);
+}
+
+function tsvToMarkdownTable(text) {
+    const lines = text.trim().split('\n').filter(l => l.trim());
+    if (lines.length < 1) return text;
+
+    const rows = lines.map(line => line.split('\t').map(cell => cell.trim().replace(/\|/g, '\\|')));
+
+    const colCounts = rows.map(r => r.length);
+    const maxCols = Math.max(...colCounts);
+    if (maxCols < 2) return normalizeGeneral(text);
+
+    const padded = rows.map(r => {
+        while (r.length < maxCols) r.push('');
+        return r;
+    });
+
+    return buildMarkdownTable(padded);
+}
+
+function buildMarkdownTable(rows) {
+    if (rows.length === 0) return '';
+
+    const header = rows[0];
+    const separator = header.map(() => '---');
+    const dataRows = rows.slice(1);
+
+    const lines = [];
+    lines.push('| ' + header.join(' | ') + ' |');
+    lines.push('| ' + separator.join(' | ') + ' |');
+    dataRows.forEach(row => {
+        lines.push('| ' + row.join(' | ') + ' |');
+    });
+
+    return lines.join('\n');
+}
+
+function normalizeMarkdownInput(text) {
+    let r = text;
+    r = r.replace(/^(\s*)[*+]\s/gm, '$1- ');
+    r = r.replace(/^(#{1,6})([^\s#])/gm, '$1 $2');
+    return normalizeGeneral(r);
+}
+
+// ============================================================================
+// UTILITIES
+// ============================================================================
+
+function fixMojibake(text) {
+    let result = text;
+
+    const threeByteMap = [
+        ['\u00E2\u20AC\u201D', '\u2014'],
+        ['\u00E2\u20AC\u201C', '\u2013'],
+        ['\u00E2\u20AC\u2122', '\u2019'],
+        ['\u00E2\u20AC\u02DC', '\u2018'],
+        ['\u00E2\u20AC\u0153', '\u201C'],
+        ['\u00E2\u20AC\u009D', '\u201D'],
+        ['\u00E2\u20AC\u00A2', '\u2022'],
+        ['\u00E2\u20AC\u00A6', '\u2026'],
+        ['\u00E2\u201A\u00B9', '\u20B9'],
+        ['\u00E2\u201A\u00AC', '\u20AC'],
+    ];
+
+    const twoByteMap = [
+        ['\u00C2\u00A3', '\u00A3'],
+        ['\u00C2\u00A9', '\u00A9'],
+        ['\u00C2\u00AE', '\u00AE'],
+        ['\u00C2\u00B0', '\u00B0'],
+        ['\u00C2\u00B7', '\u00B7'],
+        ['\u00C2\u00BD', '\u00BD'],
+        ['\u00C2\u00A0', ' '],
+        ['\u00C3\u00A9', '\u00E9'],
+        ['\u00C3\u00A8', '\u00E8'],
+        ['\u00C3\u00BC', '\u00FC'],
+        ['\u00C3\u00B6', '\u00F6'],
+        ['\u00C3\u00A4', '\u00E4'],
+        ['\u00C3\u00B1', '\u00F1'],
+    ];
+
+    for (const [bad, good] of threeByteMap) {
+        result = result.split(bad).join(good);
+    }
+    for (const [bad, good] of twoByteMap) {
+        result = result.split(bad).join(good);
+    }
+
+    result = result.replace(/\u00E2\u20AC(?=[,.\s\n;:!?)\]]|$)/gm, '\u201D');
+
+    return result;
+}
+
+function htmlToMarkdown(html) {
+    const td = new TurndownService({
+        headingStyle: 'atx',
+        codeBlockStyle: 'fenced',
+        bulletListMarker: '-',
+        emDelimiter: '*',
+    });
+
+    if (typeof turndownPluginGfm !== 'undefined') {
+        td.use(turndownPluginGfm.gfm);
+    }
+
+    td.remove(['script', 'style']);
+
+    return td.turndown(html);
+}
+
+function countChanges(original, cleaned) {
+    let changes = 0;
+    const a = original, b = cleaned;
+    const maxLen = Math.max(a.length, b.length);
+    let inDiff = false;
+    for (let i = 0; i < maxLen; i++) {
+        if (a[i] !== b[i]) {
+            if (!inDiff) { changes++; inDiff = true; }
+        } else {
+            inDiff = false;
+        }
+    }
+    return changes;
+}
+
+// ============================================================================
+// OUTPUT FORMATTERS
+// ============================================================================
+
+function formatMarkdown(md) {
+    return { text: md, html: null, copyMode: 'text' };
+}
+
+function formatGmail(md) {
+    let html = marked.parse(md, { breaks: false, gfm: true });
+
+    const font = getSelectedFont('Arial,sans-serif');
+    const size = getSelectedSize('14px');
+    const baseFont = `font-family:${font};font-size:${size};`;
+    html = html
+        .replace(/<p>/g, `<p style="margin:0 0 10px 0;${baseFont}line-height:1.5;color:#222;">`)
+        .replace(/<ul>/g, `<ul style="margin:0 0 10px 0;padding-left:24px;${baseFont}">`)
+        .replace(/<ol>/g, `<ol style="margin:0 0 10px 0;padding-left:24px;${baseFont}">`)
+        .replace(/<li>/g, '<li style="margin:0 0 4px 0;">')
+        .replace(/<h1>/g, `<h1 style="margin:0 0 8px 0;font-family:${font};font-size:22px;font-weight:bold;color:#222;">`)
+        .replace(/<h2>/g, `<h2 style="margin:0 0 8px 0;font-family:${font};font-size:18px;font-weight:bold;color:#222;">`)
+        .replace(/<h3>/g, `<h3 style="margin:0 0 6px 0;font-family:${font};font-size:16px;font-weight:bold;color:#222;">`)
+        .replace(/<blockquote>/g, `<blockquote style="border-left:3px solid #ccc;padding-left:12px;margin:0 0 10px 0;color:#555;${baseFont}">`)
+        .replace(/<code>/g, '<code style="background:#f0f0f0;padding:2px 4px;border-radius:3px;font-family:monospace;font-size:13px;">')
+        .replace(/<pre>/g, '<pre style="background:#f0f0f0;padding:12px;border-radius:4px;overflow-x:auto;margin:0 0 10px 0;font-family:monospace;font-size:13px;">')
+        .replace(/<table>/g, `<table style="border-collapse:collapse;margin:0 0 10px 0;${baseFont}">`)
+        .replace(/<th>/g, '<th style="border:1px solid #ccc;padding:6px 10px;background:#f5f5f5;font-weight:600;text-align:left;">')
+        .replace(/<td>/g, '<td style="border:1px solid #ccc;padding:6px 10px;text-align:left;">');
+
+    return { text: md, html: html, copyMode: 'rich' };
+}
+
+// Returns selected font, or the app-specific default if "Match app default"
+function getSelectedFont(appDefault) {
+    return document.getElementById('font-family').value || appDefault;
+}
+
+// Returns selected size, or empty string if "Match app default"
+// For Outlook/Gmail, we need an explicit size. For Word, empty = inherit.
+function getSelectedSize(appDefault) {
+    return document.getElementById('font-size').value || appDefault;
+}
+
+function formatOutlook(md) {
+    let html = marked.parse(md, { breaks: false, gfm: true });
+
+    const font = getSelectedFont('Calibri,sans-serif');
+    const size = getSelectedSize('11pt');
+    const baseFont = `font-family:${font};font-size:${size};color:#000;`;
+    html = html
+        .replace(/<p>/g, `<p style="margin:0 0 8pt 0;${baseFont}line-height:1.4;">`)
+        .replace(/<ul>/g, `<ul style="margin:0 0 8pt 0;padding-left:36px;${baseFont}">`)
+        .replace(/<ol>/g, `<ol style="margin:0 0 8pt 0;padding-left:36px;${baseFont}">`)
+        .replace(/<li>/g, '<li style="margin:0 0 3pt 0;">')
+        .replace(/<h1>/g, `<h1 style="margin:0 0 6pt 0;font-family:${font};font-size:16pt;font-weight:bold;color:#000;">`)
+        .replace(/<h2>/g, `<h2 style="margin:0 0 6pt 0;font-family:${font};font-size:14pt;font-weight:bold;color:#000;">`)
+        .replace(/<h3>/g, `<h3 style="margin:0 0 4pt 0;font-family:${font};font-size:12pt;font-weight:bold;color:#000;">`)
+        .replace(/<blockquote>/g, `<div style="border-left:3px solid #ccc;padding-left:12px;margin:0 0 8pt 0;color:#555;${baseFont}">`)
+        .replace(/<\/blockquote>/g, '</div>')
+        .replace(/<code>/g, '<code style="background:#f0f0f0;padding:1px 4px;border-radius:2px;font-family:Consolas,monospace;font-size:10pt;">')
+        .replace(/<pre>/g, '<pre style="background:#f0f0f0;padding:10px;border-radius:4px;overflow-x:auto;margin:0 0 8pt 0;font-family:Consolas,monospace;font-size:10pt;">')
+        .replace(/<table>/g, `<table style="border-collapse:collapse;margin:0 0 8pt 0;${baseFont}">`)
+        .replace(/<th>/g, '<th style="border:1px solid #999;padding:4px 8px;background:#f0f0f0;font-weight:bold;text-align:left;">')
+        .replace(/<td>/g, '<td style="border:1px solid #999;padding:4px 8px;text-align:left;">');
+
+    return { text: md, html: html, copyMode: 'rich' };
+}
+
+function formatWord(md) {
+    let html = marked.parse(md, { breaks: false, gfm: true });
+
+    const font = getSelectedFont('Calibri,sans-serif');
+    const size = getSelectedSize('');
+    // Build base font: always include font-family (without it Word uses Times
+    // New Roman). Only include font-size if user explicitly selected one —
+    // empty means "match document default".
+    const baseFont = `font-family:${font};` + (size ? `font-size:${size};` : '');
+    html = html
+        .replace(/<p>/g, `<p style="${baseFont}">`)
+        .replace(/<ul>/g, `<ul style="${baseFont}">`)
+        .replace(/<ol>/g, `<ol style="${baseFont}">`)
+        .replace(/<h1>/g, `<h1 style="font-family:${font};">`)
+        .replace(/<h2>/g, `<h2 style="font-family:${font};">`)
+        .replace(/<h3>/g, `<h3 style="font-family:${font};">`)
+        .replace(/<blockquote>/g, `<div style="border-left:3px solid #ccc;padding-left:12px;margin:0 0 8pt 0;color:#555;${baseFont}">`)
+        .replace(/<\/blockquote>/g, '</div>')
+        .replace(/<code>/g, '<code style="font-family:Consolas,monospace;">')
+        .replace(/<pre>/g, '<pre style="background:#f0f0f0;padding:10px;font-family:Consolas,monospace;">')
+        .replace(/<table>/g, `<table style="border-collapse:collapse;${baseFont}">`)
+        .replace(/<th>/g, '<th style="border:1px solid #bbb;padding:4px 8px;font-weight:bold;">')
+        .replace(/<td>/g, '<td style="border:1px solid #bbb;padding:4px 8px;">');
+
+    return { text: md, html: html, copyMode: 'rich' };
+}
+
+// ============================================================================
+// PIPELINE
+// ============================================================================
+
+function runPipeline() {
+    const inputEl = document.getElementById('input');
+    const plain = inputEl.value;
+    const stats = document.getElementById('stats');
+
+    if (!plain.trim() && !pastedHTML.trim()) {
+        intermediateMarkdown = '';
+        formattedOutput = '';
+        formattedHTML = '';
+        document.getElementById('output-text').value = '';
+        document.getElementById('output-html').innerHTML = '';
+        document.getElementById('output-text').classList.remove('hidden');
+        document.getElementById('output-html').classList.add('hidden');
+        document.getElementById('output-hint').classList.add('hidden');
+        stats.classList.add('hidden');
+        hideSuggestionBanner();
+        return;
+    }
+
+    switch (currentInputMode) {
+        case 'outlook':
+            intermediateMarkdown = pastedHTML
+                ? normalizeMSO(pastedHTML, 'outlook')
+                : normalizeGeneral(plain);
+            break;
+        case 'word':
+            intermediateMarkdown = pastedHTML
+                ? normalizeMSO(pastedHTML, 'word')
+                : normalizeGeneral(plain);
+            break;
+        case 'gmail':
+            intermediateMarkdown = pastedHTML
+                ? normalizeGmail(pastedHTML)
+                : normalizeGeneral(plain);
+            break;
+        case 'pdf':
+            intermediateMarkdown = normalizePDF(plain);
+            break;
+        case 'excel':
+            intermediateMarkdown = normalizeExcel(pastedHTML, plain);
+            break;
+        case 'markdown':
+            intermediateMarkdown = normalizeMarkdownInput(plain);
+            break;
+        default:
+            intermediateMarkdown = normalizeGeneral(plain);
+    }
+
+    // Auto-detect: always run on paste, suggest if detected source differs
+    // from current input mode (not just when in General mode)
+    if (!suggestionDismissed) {
+        const detected = detectSource(pastedHTML, plain);
+        if (detected && detected !== currentInputMode) {
+            showSuggestionBanner(detected);
+        } else {
+            hideSuggestionBanner();
+        }
+    }
+
+    const changeCount = countChanges(plain, intermediateMarkdown);
+    stats.classList.remove('hidden');
+    document.getElementById('stat-mode').textContent = `Source: ${INPUT_LABELS[currentInputMode]}`;
+    document.getElementById('stat-changes').textContent = changeCount > 0
+        ? `${changeCount} fix${changeCount === 1 ? '' : 'es'} applied`
+        : 'No changes needed';
+
+    renderOutput();
+}
+
+function renderOutput() {
+    const outputText = document.getElementById('output-text');
+    const outputHtml = document.getElementById('output-html');
+    const hint = document.getElementById('output-hint');
+    const copyBtn = document.getElementById('btn-copy');
+
+    if (!intermediateMarkdown) return;
+
+    let result;
+    switch (currentOutputMode) {
+        case 'outlook':
+            result = formatOutlook(intermediateMarkdown);
+            break;
+        case 'gmail':
+            result = formatGmail(intermediateMarkdown);
+            break;
+        case 'word':
+            result = formatWord(intermediateMarkdown);
+            break;
+        default:
+            result = formatMarkdown(intermediateMarkdown);
+    }
+
+    formattedOutput = result.text;
+    formattedHTML = result.html || '';
+
+    if (result.copyMode === 'rich') {
+        outputText.classList.add('hidden');
+        outputHtml.classList.remove('hidden');
+        outputHtml.innerHTML = formattedHTML;
+        hint.classList.remove('hidden');
+        hint.textContent = `Preview \u2014 Copy puts formatted HTML on your clipboard for ${OUTPUT_LABELS[currentOutputMode]}.`;
+        copyBtn.textContent = `Copy for ${OUTPUT_LABELS[currentOutputMode]}`;
+    } else {
+        outputText.classList.remove('hidden');
+        outputHtml.classList.add('hidden');
+        outputText.value = formattedOutput;
+        hint.classList.add('hidden');
+        copyBtn.textContent = 'Copy';
+    }
+}
+
+// ============================================================================
+// CLIPBOARD
+// ============================================================================
+
+async function copyOutput() {
+    if (formattedHTML && currentOutputMode !== 'markdown') {
+        try {
+            const htmlBlob = new Blob([formattedHTML], { type: 'text/html' });
+            const textBlob = new Blob([formattedOutput], { type: 'text/plain' });
+            await navigator.clipboard.write([
+                new ClipboardItem({
+                    'text/html': htmlBlob,
+                    'text/plain': textBlob,
+                })
+            ]);
+            showCopyFeedback(`Copied for ${OUTPUT_LABELS[currentOutputMode]}!`);
+        } catch (err) {
+            await navigator.clipboard.writeText(formattedHTML);
+            showCopyFeedback('Copied HTML');
+        }
+    } else {
+        const text = document.getElementById('output-text').value;
+        if (!text) return;
+        await navigator.clipboard.writeText(text);
+        showCopyFeedback('Copied!');
+    }
+}
+
+function showCopyFeedback(message) {
+    const btn = document.getElementById('btn-copy');
+    const original = btn.textContent;
+    btn.textContent = message;
+    btn.classList.add('copy-flash');
+    setTimeout(() => {
+        btn.textContent = original;
+        btn.classList.remove('copy-flash');
+    }, 1500);
+}
+
+function clearAll() {
+    document.getElementById('input').value = '';
+    pastedHTML = '';
+    pastedPlain = '';
+    intermediateMarkdown = '';
+    formattedOutput = '';
+    formattedHTML = '';
+    suggestedMode = null;
+    suggestionDismissed = false;
+    hideSuggestionBanner();
+    runPipeline();
+}
+
+// ============================================================================
+// INIT
+// ============================================================================
+
+const inputEl = document.getElementById('input');
+
+inputEl.addEventListener('paste', (e) => {
+    const clipboardData = e.clipboardData || window.clipboardData;
+    if (clipboardData) {
+        pastedHTML = clipboardData.getData('text/html') || '';
+        pastedPlain = clipboardData.getData('text/plain') || '';
+    }
+    // Reset suggestion state on every new paste so auto-detect runs fresh
+    suggestionDismissed = false;
+    suggestedMode = null;
+    setTimeout(() => {
+        runPipeline();
+    }, 10);
+});
+
+inputEl.addEventListener('input', () => {
+    // If input was cleared, reset HTML state so stale data doesn't linger
+    if (!inputEl.value.trim()) {
+        pastedHTML = '';
+        pastedPlain = '';
+        suggestionDismissed = false;
+        suggestedMode = null;
+    }
+    runPipeline();
+});
+
+applyOutputConstraints();
+updateThemeIcons();
+</script>
+</body>
+</html>
