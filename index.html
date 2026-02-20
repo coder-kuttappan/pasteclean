@@ -58,8 +58,8 @@
         .banner-enter { animation: slideDown 0.3s ease-out forwards; overflow: hidden; }
         .banner-exit { animation: slideUp 0.2s ease-in forwards; overflow: hidden; }
 
-        /* HTML preview — always light (simulates target app) */
-        .html-preview { background: #fff; color: #222; }
+        /* HTML preview — follows app theme; override inline colors from formatters in dark mode */
+        html.dark .html-preview * { color: inherit !important; }
         .html-preview h1 { font-size: 1.5em; font-weight: bold; margin: 0.5em 0; }
         .html-preview h2 { font-size: 1.3em; font-weight: bold; margin: 0.5em 0; }
         .html-preview h3 { font-size: 1.1em; font-weight: bold; margin: 0.5em 0; }
@@ -70,13 +70,19 @@
         .html-preview code { background: #f0f0f0; padding: 0.15em 0.4em; border-radius: 3px; font-size: 0.9em; }
         .html-preview pre { background: #f0f0f0; padding: 1em; border-radius: 6px; overflow-x: auto; margin: 0.5em 0; }
         .html-preview pre code { background: none; padding: 0; }
+        html.dark .html-preview code { background: #1f2937; }
+        html.dark .html-preview pre { background: #1f2937; }
         .html-preview blockquote { border-left: 3px solid #ccc; padding-left: 1em; color: #555; margin: 0.5em 0; }
+        html.dark .html-preview blockquote { color: #9ca3af; }
         .html-preview a { color: #1a73e8; text-decoration: underline; }
+        html.dark .html-preview a { color: #818cf8; }
         .html-preview strong { font-weight: bold; }
         .html-preview em { font-style: italic; }
         .html-preview table { border-collapse: collapse; margin: 0.5em 0; width: 100%; }
         .html-preview th, .html-preview td { border: 1px solid #ccc; padding: 0.4em 0.8em; text-align: left; }
+        html.dark .html-preview th, html.dark .html-preview td { border-color: #374151; }
         .html-preview th { background: #f5f5f5; font-weight: 600; }
+        html.dark .html-preview th { background: #1f2937; }
     </style>
 </head>
 <body class="min-h-screen flex flex-col items-center px-4 py-8 md:py-12 bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 transition-colors">
@@ -131,20 +137,14 @@
         </div>
     </div>
 
-    <!-- Output tabs (destination) + actions -->
+    <!-- Output tabs (destination) -->
     <div class="w-full max-w-3xl mb-1 flex items-center gap-2 flex-wrap">
         <span class="text-xs text-gray-400 dark:text-gray-500 mr-1">Pasting to:</span>
         <button onclick="setOutputMode('markdown')" id="out-markdown" class="tab-active px-3 py-1.5 rounded-lg text-xs font-medium transition-all">Markdown</button>
         <button onclick="setOutputMode('outlook')" id="out-outlook" class="tab-inactive px-3 py-1.5 rounded-lg text-xs font-medium transition-all">Outlook</button>
         <button onclick="setOutputMode('gmail')" id="out-gmail" class="tab-inactive px-3 py-1.5 rounded-lg text-xs font-medium transition-all">Gmail</button>
         <button onclick="setOutputMode('word')" id="out-word" class="tab-inactive px-3 py-1.5 rounded-lg text-xs font-medium transition-all">Word</button>
-        <div class="flex-1"></div>
-        <button onclick="clearAll()" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-all">
-            Clear
-        </button>
-        <button onclick="copyOutput()" id="btn-copy" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-accent text-white hover:bg-accentHover transition-all">
-            Copy
-        </button>
+        <button onclick="setOutputMode('whatsapp')" id="out-whatsapp" class="tab-inactive px-3 py-1.5 rounded-lg text-xs font-medium transition-all">WhatsApp</button>
     </div>
 
     <!-- Font/size overrides (shown for Word/Outlook/Gmail output) -->
@@ -172,14 +172,27 @@
     </div>
 
     <!-- Output -->
-    <div class="w-full max-w-3xl mb-6">
+    <div class="w-full max-w-3xl mb-3">
         <textarea
             id="output-text"
             class="w-full h-48 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl p-4 text-gray-900 dark:text-gray-100 text-sm font-mono placeholder-gray-400 dark:placeholder-gray-600 focus:border-accent transition-colors"
             placeholder="Cleaned text appears here..."
         ></textarea>
-        <div id="output-html" class="hidden w-full min-h-[12rem] border border-gray-200 dark:border-gray-700 rounded-xl p-4 text-sm html-preview"></div>
+        <div id="output-html-wrap" class="hidden">
+            <div id="output-html" class="w-full min-h-[12rem] bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl p-4 text-sm text-gray-900 dark:text-gray-100 html-preview"></div>
+        </div>
         <p id="output-hint" class="hidden text-xs text-gray-400 dark:text-gray-500 mt-2"></p>
+    </div>
+
+    <!-- Actions (below output for easy reach on mobile) -->
+    <div class="w-full max-w-3xl mb-6 flex items-center gap-2">
+        <div class="flex-1"></div>
+        <button onclick="clearAll()" class="px-4 py-2 rounded-lg text-sm font-medium bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition-all">
+            Clear
+        </button>
+        <button onclick="copyOutput()" id="btn-copy" class="px-4 py-2 rounded-lg text-sm font-medium bg-accent text-white hover:bg-accentHover transition-all">
+            Copy
+        </button>
     </div>
 
     <!-- Stats -->
@@ -194,6 +207,7 @@
     <div class="w-full max-w-3xl mt-auto pt-8 border-t border-gray-200 dark:border-gray-800">
         <div class="flex flex-col md:flex-row justify-between items-center gap-2 text-xs text-gray-400 dark:text-gray-500">
             <span>Built by <a href="https://github.com/coderkuttappan" class="text-accent hover:underline">Coder Kuttappan</a></span>
+            <span id="paste-counter" class="tabular-nums"></span>
             <span>All processing happens in your browser. Nothing is sent anywhere.</span>
         </div>
     </div>
@@ -204,7 +218,7 @@
 // ============================================================================
 
 const INPUT_MODES = ['general', 'outlook', 'gmail', 'word', 'pdf', 'excel', 'markdown'];
-const OUTPUT_MODES = ['markdown', 'outlook', 'gmail', 'word'];
+const OUTPUT_MODES = ['markdown', 'outlook', 'gmail', 'word', 'whatsapp'];
 
 // Input→Output conflicts: when input is X, hide X from output
 const INPUT_OUTPUT_CONFLICTS = {
@@ -229,6 +243,7 @@ const OUTPUT_LABELS = {
     outlook: 'Outlook',
     gmail: 'Gmail',
     word: 'Word',
+    whatsapp: 'WhatsApp',
 };
 
 // ============================================================================
@@ -445,6 +460,23 @@ function detectSource(html, plain) {
         }
     }
 
+    // Generic rich HTML email (marketing newsletters, transactional emails)
+    // Check last — only if no specific app was detected above
+    if (html) {
+        const signals = [
+            /unsubscribe/i,
+            /email\s*preferences/i,
+            /view\s*(this\s*)?(email|in\s*browser)/i,
+            /role="presentation"/i,
+            /<table[^>]*width\s*=\s*["']?(600|640|660|700|800)["']?/i,
+            /<center>/i,
+            /<!--\[if\s/i,
+            /max-width:\s*(600|640|660|700|800)px/i,
+        ];
+        const matchCount = signals.filter(r => r.test(html)).length;
+        if (matchCount >= 2) return 'gmail';  // Best generic email handler
+    }
+
     return null;
 }
 
@@ -464,6 +496,116 @@ function normalizeGeneral(text) {
     r = r.split('\n').map(l => l.trimEnd()).join('\n');
     r = r.replace(/\n{3,}/g, '\n\n');
     return r.trim();
+}
+
+function normalizeHtmlGeneral(html) {
+    const cleaned = cleanEmailHtml(html);
+    const md = htmlToMarkdown(cleaned);
+    return normalizeGeneral(md);
+}
+
+function cleanEmailHtml(html) {
+    let doc = new DOMParser().parseFromString(html, 'text/html');
+
+    // Remove script, style, head elements
+    doc.querySelectorAll('script, style, head, link, meta').forEach(el => el.remove());
+
+    // Remove tracking pixels and tiny/invisible images
+    doc.querySelectorAll('img').forEach(img => {
+        const w = parseInt(img.getAttribute('width') || '999', 10);
+        const h = parseInt(img.getAttribute('height') || '999', 10);
+        const src = img.getAttribute('src') || '';
+        if (w <= 3 || h <= 3) { img.remove(); return; }
+        if (/track|pixel|beacon|open[._-]|click[._-]|\.gif\?/i.test(src) && !img.alt) {
+            img.remove(); return;
+        }
+    });
+
+    // Remove hidden elements
+    doc.querySelectorAll('[style]').forEach(el => {
+        const style = el.getAttribute('style') || '';
+        if (/display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0/i.test(style)) {
+            el.remove();
+        }
+    });
+    doc.querySelectorAll('[hidden]').forEach(el => el.remove());
+
+    // Unwrap layout tables (role=presentation, single-column, or width-constrained email wrappers)
+    unwrapLayoutTables(doc);
+
+    // Remove all inline styles and classes
+    doc.querySelectorAll('[style]').forEach(el => el.removeAttribute('style'));
+    doc.querySelectorAll('[class]').forEach(el => el.removeAttribute('class'));
+
+    // Convert orphan divs to paragraphs (divs with only inline content)
+    doc.querySelectorAll('div').forEach(div => {
+        const hasBlockChildren = div.querySelector('div, p, ul, ol, table, blockquote, h1, h2, h3, h4, h5, h6, section, article');
+        if (!hasBlockChildren && div.textContent.trim()) {
+            const p = doc.createElement('p');
+            p.innerHTML = div.innerHTML;
+            div.replaceWith(p);
+        }
+    });
+
+    // Remove truly empty elements (no text, no images)
+    doc.querySelectorAll('span, div, p, td, tr, table').forEach(el => {
+        if (!el.textContent.trim() && !el.querySelector('img')) {
+            el.remove();
+        }
+    });
+
+    return doc.body.innerHTML;
+}
+
+function unwrapLayoutTables(doc) {
+    // Process innermost tables first (bottom-up) to handle nesting
+    let tables;
+    let maxPasses = 10;
+    while (maxPasses-- > 0) {
+        tables = Array.from(doc.querySelectorAll('table'));
+        if (tables.length === 0) break;
+
+        let unwrapped = false;
+        for (const table of tables) {
+            // Skip tables that look like actual data tables
+            if (isDataTable(table)) continue;
+
+            // This is a layout table — unwrap it
+            const frag = doc.createDocumentFragment();
+            table.querySelectorAll(':scope > tbody > tr > td, :scope > tr > td').forEach(td => {
+                // Move each cell's children out
+                while (td.firstChild) {
+                    frag.appendChild(td.firstChild);
+                }
+            });
+            table.replaceWith(frag);
+            unwrapped = true;
+        }
+
+        if (!unwrapped) break;
+    }
+}
+
+function isDataTable(table) {
+    const rows = table.querySelectorAll(':scope > tbody > tr, :scope > tr');
+    if (rows.length < 2) return false;
+
+    // Count columns consistently across rows
+    const colCounts = Array.from(rows).map(
+        tr => tr.querySelectorAll(':scope > td, :scope > th').length
+    );
+    const avgCols = colCounts.reduce((a, b) => a + b, 0) / colCounts.length;
+
+    // Data table: multiple rows AND multiple columns AND consistent column count
+    if (avgCols >= 2 && rows.length >= 2) {
+        const allSame = colCounts.every(c => c === colCounts[0]);
+        if (allSame) return true;
+    }
+
+    // Has th elements = data table
+    if (table.querySelector('th')) return true;
+
+    return false;
 }
 
 function normalizeMSO(html, source) {
@@ -553,6 +695,7 @@ function convertMsoListsToReal(doc, listParas) {
 function normalizeGmail(html) {
     let doc = new DOMParser().parseFromString(html, 'text/html');
 
+    // Gmail-specific cleanup
     doc.querySelectorAll('.gmail_signature, [data-smartmail="gmail_signature"]').forEach(el => {
         el.parentNode.removeChild(el);
     });
@@ -561,19 +704,10 @@ function normalizeGmail(html) {
         el.removeAttribute('class');
     });
 
-    doc.querySelectorAll('div').forEach(div => {
-        const hasBlockChildren = div.querySelector('div, p, ul, ol, table, blockquote, h1, h2, h3, h4, h5, h6');
-        if (!hasBlockChildren && div.textContent.trim()) {
-            const p = doc.createElement('p');
-            p.innerHTML = div.innerHTML;
-            div.parentNode.replaceChild(p, div);
-        }
-    });
+    // Run generic email HTML cleaner (handles layout tables, tracking pixels, etc.)
+    const cleaned = cleanEmailHtml(doc.body.innerHTML);
 
-    doc.querySelectorAll('[style]').forEach(el => el.removeAttribute('style'));
-    doc.querySelectorAll('[class]').forEach(el => el.removeAttribute('class'));
-
-    const md = htmlToMarkdown(doc.body.innerHTML);
+    const md = htmlToMarkdown(cleaned);
     return normalizeGeneral(md);
 }
 
@@ -702,6 +836,13 @@ function normalizeMarkdownInput(text) {
 // ============================================================================
 // UTILITIES
 // ============================================================================
+
+function hasSignificantHtml(html) {
+    if (!html || !html.trim()) return false;
+    // Check if the HTML has real structure beyond just a plain-text wrapper
+    const tagCount = (html.match(/<(p|div|table|ul|ol|li|h[1-6]|blockquote|br|a|strong|em|b|i|span)\b/gi) || []).length;
+    return tagCount >= 3;
+}
 
 function fixMojibake(text) {
     let result = text;
@@ -874,6 +1015,47 @@ function formatWord(md) {
     return { text: md, html: html, copyMode: 'rich' };
 }
 
+function formatWhatsApp(md) {
+    let text = md;
+
+    // Convert headings to *bold* lines
+    text = text.replace(/^#{1,6}\s+(.+)$/gm, '*$1*');
+
+    // Convert bold: **text** or __text__ → *text*
+    text = text.replace(/\*\*(.+?)\*\*/g, '*$1*');
+    text = text.replace(/__(.+?)__/g, '*$1*');
+
+    // Convert italic: *text* or _text_ → _text_
+    // Must run after bold conversion. Match single * not preceded/followed by *
+    text = text.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '_$1_');
+
+    // Convert strikethrough: ~~text~~ → ~text~
+    text = text.replace(/~~(.+?)~~/g, '~$1~');
+
+    // Convert inline code: `text` → ```text```
+    // But leave fenced code blocks alone
+    text = text.replace(/(?<!`)``(?!`)(.+?)(?<!`)``(?!`)/g, '```$1```');
+    text = text.replace(/(?<!`)`(?!`)(.+?)(?<!`)`(?!`)/g, '```$1```');
+
+    // Convert links: [text](url) → text (url)
+    text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)');
+
+    // Convert images: ![alt](url) → [Image: alt]
+    text = text.replace(/!\[([^\]]*)\]\([^)]+\)/g, (_, alt) => alt ? `[Image: ${alt}]` : '');
+
+    // Convert blockquotes: > text → (keep as-is, WhatsApp doesn't have quotes)
+    // Just remove the > prefix
+    text = text.replace(/^>\s?/gm, '');
+
+    // Convert horizontal rules
+    text = text.replace(/^[-*_]{3,}$/gm, '———');
+
+    // Clean up multiple blank lines
+    text = text.replace(/\n{3,}/g, '\n\n');
+
+    return { text: text.trim(), html: null, copyMode: 'text' };
+}
+
 // ============================================================================
 // PIPELINE
 // ============================================================================
@@ -890,7 +1072,7 @@ function runPipeline() {
         document.getElementById('output-text').value = '';
         document.getElementById('output-html').innerHTML = '';
         document.getElementById('output-text').classList.remove('hidden');
-        document.getElementById('output-html').classList.add('hidden');
+        document.getElementById('output-html-wrap').classList.add('hidden');
         document.getElementById('output-hint').classList.add('hidden');
         stats.classList.add('hidden');
         hideSuggestionBanner();
@@ -923,7 +1105,9 @@ function runPipeline() {
             intermediateMarkdown = normalizeMarkdownInput(plain);
             break;
         default:
-            intermediateMarkdown = normalizeGeneral(plain);
+            intermediateMarkdown = (pastedHTML && hasSignificantHtml(pastedHTML))
+                ? normalizeHtmlGeneral(pastedHTML)
+                : normalizeGeneral(plain);
     }
 
     // Auto-detect: always run on paste, suggest if detected source differs
@@ -949,6 +1133,7 @@ function runPipeline() {
 
 function renderOutput() {
     const outputText = document.getElementById('output-text');
+    const outputHtmlWrap = document.getElementById('output-html-wrap');
     const outputHtml = document.getElementById('output-html');
     const hint = document.getElementById('output-hint');
     const copyBtn = document.getElementById('btn-copy');
@@ -966,6 +1151,9 @@ function renderOutput() {
         case 'word':
             result = formatWord(intermediateMarkdown);
             break;
+        case 'whatsapp':
+            result = formatWhatsApp(intermediateMarkdown);
+            break;
         default:
             result = formatMarkdown(intermediateMarkdown);
     }
@@ -975,14 +1163,14 @@ function renderOutput() {
 
     if (result.copyMode === 'rich') {
         outputText.classList.add('hidden');
-        outputHtml.classList.remove('hidden');
+        outputHtmlWrap.classList.remove('hidden');
         outputHtml.innerHTML = formattedHTML;
         hint.classList.remove('hidden');
         hint.textContent = `Preview \u2014 Copy puts formatted HTML on your clipboard for ${OUTPUT_LABELS[currentOutputMode]}.`;
         copyBtn.textContent = `Copy for ${OUTPUT_LABELS[currentOutputMode]}`;
     } else {
         outputText.classList.remove('hidden');
-        outputHtml.classList.add('hidden');
+        outputHtmlWrap.classList.add('hidden');
         outputText.value = formattedOutput;
         hint.classList.add('hidden');
         copyBtn.textContent = 'Copy';
@@ -1042,6 +1230,34 @@ function clearAll() {
 }
 
 // ============================================================================
+// PASTE COUNTER (localStorage)
+// ============================================================================
+
+function getPasteStats() {
+    try {
+        return JSON.parse(localStorage.getItem('pasteclean-stats') || '{}');
+    } catch { return {}; }
+}
+
+function incrementPasteCounter() {
+    const stats = getPasteStats();
+    stats.pastes = (stats.pastes || 0) + 1;
+    localStorage.setItem('pasteclean-stats', JSON.stringify(stats));
+    renderPasteCounter();
+}
+
+function renderPasteCounter() {
+    const stats = getPasteStats();
+    const el = document.getElementById('paste-counter');
+    const count = stats.pastes || 0;
+    if (count === 0) {
+        el.textContent = '';
+    } else {
+        el.textContent = `${count.toLocaleString()} paste${count === 1 ? '' : 's'} cleaned`;
+    }
+}
+
+// ============================================================================
 // INIT
 // ============================================================================
 
@@ -1056,6 +1272,7 @@ inputEl.addEventListener('paste', (e) => {
     // Reset suggestion state on every new paste so auto-detect runs fresh
     suggestionDismissed = false;
     suggestedMode = null;
+    incrementPasteCounter();
     setTimeout(() => {
         runPipeline();
     }, 10);
@@ -1074,6 +1291,7 @@ inputEl.addEventListener('input', () => {
 
 applyOutputConstraints();
 updateThemeIcons();
+renderPasteCounter();
 </script>
 </body>
 </html>
