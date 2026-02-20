@@ -100,7 +100,7 @@
                 <svg id="icon-moon" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
             </button>
         </div>
-        <p class="text-gray-500 dark:text-gray-400 text-sm md:text-base">Paste anything. We detect the source and clean it for wherever it's going.</p>
+        <p class="text-gray-500 dark:text-gray-400 text-sm md:text-base">Copied text from Outlook, Word, or Gmail full of weird formatting? Pick the source, pick the destination — get clean text instantly.</p>
     </div>
 
     <!-- Input tabs (source) -->
@@ -398,19 +398,9 @@ function dismissSuggestion() {
 
 function detectSource(html, plain) {
     if (html) {
-        // Order matters: check specific apps before generic MSO
-        // (Excel and Gmail can both contain MSO markup)
-
-        // 1. Excel: explicit Excel namespace, or table-heavy MSO content
+        // 1. Explicit app namespaces (highest confidence)
         if (/xmlns:x="urn:schemas-microsoft-com:office:excel"|ProgId.*Excel/i.test(html)) {
             return 'excel';
-        }
-        // Table-dominant content from any spreadsheet app
-        if (/<table[\s>]/i.test(html) && (/<tr[\s>].*<tr[\s>]/is.test(html))) {
-            const cellCount = (html.match(/<td[\s>]/gi) || []).length;
-            const paraCount = (html.match(/<p[\s>]/gi) || []).length;
-            // If cells vastly outnumber paragraphs, it's a spreadsheet
-            if (cellCount >= 4 && cellCount > paraCount * 2) return 'excel';
         }
 
         // 2. Gmail: check before MSO because Gmail can wrap Outlook-authored emails
@@ -424,6 +414,19 @@ function detectSource(html, plain) {
                 return 'word';
             }
             return 'outlook';
+        }
+
+        // 4. Generic HTML email (marketing newsletters, transactional emails)
+        // Must check BEFORE table heuristic — email HTML is full of layout tables
+        if (looksLikeEmailHtml(html)) {
+            return 'gmail';  // Best generic email handler
+        }
+
+        // 5. Table-dominant content (spreadsheet) — only if not email
+        if (/<table[\s>]/i.test(html) && (/<tr[\s>].*<tr[\s>]/is.test(html))) {
+            const cellCount = (html.match(/<td[\s>]/gi) || []).length;
+            const paraCount = (html.match(/<p[\s>]/gi) || []).length;
+            if (cellCount >= 4 && cellCount > paraCount * 2) return 'excel';
         }
     }
 
@@ -460,24 +463,21 @@ function detectSource(html, plain) {
         }
     }
 
-    // Generic rich HTML email (marketing newsletters, transactional emails)
-    // Check last — only if no specific app was detected above
-    if (html) {
-        const signals = [
-            /unsubscribe/i,
-            /email\s*preferences/i,
-            /view\s*(this\s*)?(email|in\s*browser)/i,
-            /role="presentation"/i,
-            /<table[^>]*width\s*=\s*["']?(600|640|660|700|800)["']?/i,
-            /<center>/i,
-            /<!--\[if\s/i,
-            /max-width:\s*(600|640|660|700|800)px/i,
-        ];
-        const matchCount = signals.filter(r => r.test(html)).length;
-        if (matchCount >= 2) return 'gmail';  // Best generic email handler
-    }
-
     return null;
+}
+
+function looksLikeEmailHtml(html) {
+    const signals = [
+        /unsubscribe/i,
+        /email\s*preferences/i,
+        /view\s*(this\s*)?(email|in\s*browser)/i,
+        /role="presentation"/i,
+        /<table[^>]*width\s*=\s*["']?(600|640|660|700|800)["']?/i,
+        /<center>/i,
+        /<!--\[if\s/i,
+        /max-width:\s*(600|640|660|700|800)px/i,
+    ];
+    return signals.filter(r => r.test(html)).length >= 2;
 }
 
 // ============================================================================
@@ -587,25 +587,23 @@ function unwrapLayoutTables(doc) {
 }
 
 function isDataTable(table) {
+    // Has th elements = almost certainly a data table
+    if (table.querySelector('th')) return true;
+
     const rows = table.querySelectorAll(':scope > tbody > tr, :scope > tr');
     if (rows.length < 2) return false;
 
-    // Count columns consistently across rows
     const colCounts = Array.from(rows).map(
         tr => tr.querySelectorAll(':scope > td, :scope > th').length
     );
-    const avgCols = colCounts.reduce((a, b) => a + b, 0) / colCounts.length;
+    const maxCols = Math.max(...colCounts);
 
-    // Data table: multiple rows AND multiple columns AND consistent column count
-    if (avgCols >= 2 && rows.length >= 2) {
-        const allSame = colCounts.every(c => c === colCounts[0]);
-        if (allSame) return true;
-    }
+    // 1-2 column tables are almost always layout in email HTML.
+    // Only consider 3+ column tables with consistent structure as data.
+    if (maxCols < 3) return false;
 
-    // Has th elements = data table
-    if (table.querySelector('th')) return true;
-
-    return false;
+    const allSame = colCounts.every(c => c === colCounts[0]);
+    return allSame && rows.length >= 3;
 }
 
 function normalizeMSO(html, source) {
@@ -657,7 +655,10 @@ function normalizeMSO(html, source) {
         }
     });
 
-    const md = htmlToMarkdown(doc.body.innerHTML);
+    // Run generic email HTML cleaner to handle layout tables, tracking pixels, etc.
+    // Safe for actual MSO content (only removes non-content elements)
+    const cleaned = cleanEmailHtml(doc.body.innerHTML);
+    const md = htmlToMarkdown(cleaned);
     return normalizeGeneral(md);
 }
 
