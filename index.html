@@ -447,6 +447,7 @@ function detectSource(html, plain) {
             return 'markdown';
         }
 
+        // PDF detection: mid-sentence line breaks continuing lowercase
         const pdfSignals = lines.filter((l, i) => {
             if (i >= lines.length - 1) return false;
             const next = lines[i + 1];
@@ -454,7 +455,23 @@ function detectSource(html, plain) {
                    !/[.!?:;]$/.test(l) &&
                    next && /^[a-z]/.test(next.trim());
         });
-        if (lines.length >= 4 && pdfSignals.length / lines.length > 0.3) {
+        // Isolated page numbers
+        const pageNumbers = lines.filter(l => /^\s*\d{1,4}\s*$/.test(l) || /^\s*page\s+\d+/i.test(l));
+        // Consistent short line lengths (column-width text)
+        const nonEmptyLines = lines.filter(l => l.trim().length > 0);
+        const lineLengths = nonEmptyLines.map(l => l.length);
+        const medianLen = lineLengths.slice().sort((a, b) => a - b)[Math.floor(lineLengths.length / 2)] || 0;
+        const shortConsistent = medianLen >= 35 && medianLen <= 75 &&
+            nonEmptyLines.filter(l => Math.abs(l.length - medianLen) < 15).length / nonEmptyLines.length > 0.5;
+        // Hyphenation across line breaks
+        const hyphenBreaks = (plain.match(/\w-\n\s*[a-z]/g) || []).length;
+
+        let pdfScore = pdfSignals.length / Math.max(lines.length, 1);
+        if (pageNumbers.length >= 2) pdfScore += 0.15;
+        if (shortConsistent) pdfScore += 0.1;
+        if (hyphenBreaks >= 3) pdfScore += 0.1;
+
+        if (lines.length >= 4 && pdfScore > 0.3) {
             return 'pdf';
         }
 
@@ -712,56 +729,338 @@ function normalizeGmail(html) {
     return normalizeGeneral(md);
 }
 
-function normalizePDF(text) {
+function normalizePDF(text, opts = {}) {
     let r = text;
-    r = r.replace(/(\w)-\n(\w)/g, '$1$2');
 
-    const lines = r.split('\n');
-    const merged = [];
+    // When input came from HTML conversion, skip structural passes that HTML already handled
+    const fromHtml = opts.fromHtml || false;
+
+    if (!fromHtml) {
+        r = pdfStripHeadersFooters(r);
+        r = pdfDetectColumns(r);
+    }
+
+    r = pdfDehyphenate(r);
+
+    if (!fromHtml) {
+        r = pdfDetectHeadings(r);
+        r = pdfMergeLines(r);
+        r = pdfDetectTables(r);
+    }
+
+    // Final cleanup
+    r = normalizeGeneral(r);
+    r = r.replace(/\n{3,}/g, '\n\n');
+    return r.trim();
+}
+
+// --- PDF Pass 1: Strip page headers, footers, and page numbers ---
+function pdfStripHeadersFooters(text) {
+    const lines = text.split('\n');
+
+    // Detect repeating lines (headers/footers): hash each line, find lines appearing 3+ times
+    const lineCounts = {};
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.length > 0 && trimmed.length < 100) {
+            lineCounts[trimmed] = (lineCounts[trimmed] || 0) + 1;
+        }
+    }
+    const repeatingLines = new Set();
+    for (const [line, count] of Object.entries(lineCounts)) {
+        if (count >= 3) repeatingLines.add(line);
+    }
+
+    return lines.filter(line => {
+        const trimmed = line.trim();
+        // Isolated page numbers: just digits on their own line
+        if (/^\s*\d{1,4}\s*$/.test(line)) return false;
+        // "Page X of Y" patterns
+        if (/^\s*page\s+\d+\s*(of\s+\d+)?\s*$/i.test(line)) return false;
+        // "- X -" centered page numbers
+        if (/^\s*[-–—]\s*\d+\s*[-–—]\s*$/.test(line)) return false;
+        // Roman numeral page numbers on their own line
+        if (/^\s*[ivxlcdm]+\s*$/i.test(line) && /^[ivxlcdm]+$/i.test(trimmed) && trimmed.length <= 6) return false;
+        // Repeating header/footer lines
+        if (repeatingLines.has(trimmed)) return false;
+        return true;
+    }).join('\n');
+}
+
+// --- PDF Pass 2: Column detection and deinterleaving ---
+function pdfDetectColumns(text) {
+    const lines = text.split('\n');
+    if (lines.length < 10) return text;
+
+    // Compute line length stats for non-empty lines
+    const nonEmpty = lines.filter(l => l.trim().length > 0);
+    if (nonEmpty.length < 10) return text;
+
+    const lengths = nonEmpty.map(l => l.length);
+    const median = lengths.slice().sort((a, b) => a - b)[Math.floor(lengths.length / 2)];
+
+    // Suspect columns if median line length is 35-65 chars (typical column width)
+    // and many lines break mid-sentence
+    if (median < 35 || median > 65) return text;
+
+    const midBreaks = nonEmpty.filter(l => {
+        const t = l.trim();
+        return t.length > 15 && !/[.!?:;]$/.test(t) && t.length <= median + 10;
+    });
+    if (midBreaks.length / nonEmpty.length < 0.4) return text;
+
+    // Check for consistent "gap" in lines — spaces in the middle indicating two columns
+    // Look for lines with 2+ spaces creating a split point
+    const gapPositions = [];
+    for (const line of nonEmpty) {
+        const match = line.match(/\S {2,}\S/);
+        if (match) {
+            gapPositions.push(line.indexOf(match[0]) + match[0].indexOf('  '));
+        }
+    }
+
+    if (gapPositions.length < nonEmpty.length * 0.3) return text; // Not enough lines have gaps
+
+    // Find the most common gap position (column break point)
+    const posCounts = {};
+    for (const pos of gapPositions) {
+        // Allow ±3 chars tolerance
+        const bucket = Math.round(pos / 3) * 3;
+        posCounts[bucket] = (posCounts[bucket] || 0) + 1;
+    }
+    const bestBucket = Object.entries(posCounts).sort((a, b) => b[1] - a[1])[0];
+    if (!bestBucket || bestBucket[1] < gapPositions.length * 0.3) return text;
+
+    const splitPos = parseInt(bestBucket[0]);
+
+    // Split each line into left and right columns
+    const leftCol = [];
+    const rightCol = [];
+    for (const line of lines) {
+        if (line.length > splitPos + 2) {
+            const left = line.substring(0, splitPos).trimEnd();
+            const right = line.substring(splitPos).trimStart();
+            leftCol.push(left);
+            rightCol.push(right);
+        } else {
+            leftCol.push(line);
+            rightCol.push('');
+        }
+    }
+
+    // Reconstruct: all left column text, then all right column text
+    return leftCol.join('\n') + '\n\n' + rightCol.filter(l => l.trim()).join('\n');
+}
+
+// --- PDF Pass 3: Dehyphenation ---
+function pdfDehyphenate(text) {
+    let r = text;
+    // Dehyphenate: word-\nword → join (only simple hyphens, not en/em dashes)
+    r = r.replace(/(\w)-\n\s*(\w)/g, '$1$2');
+    return r;
+}
+
+// --- PDF Pass 4: Heading detection ---
+function pdfDetectHeadings(text) {
+    const lines = text.split('\n');
+    const result = [];
+
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
-        const next = lines[i + 1];
+        const trimmed = line.trim();
+        const prev = i > 0 ? lines[i - 1] : '';
+        const next = i < lines.length - 1 ? lines[i + 1] : '';
 
-        if (!next || !line.trim()) {
+        // Setext-style underlines: === or ---
+        if (i > 0 && /^={3,}\s*$/.test(trimmed)) {
+            // Previous line is an h1
+            result[result.length - 1] = '# ' + result[result.length - 1].trim();
+            continue; // skip the underline
+        }
+        if (i > 0 && /^-{3,}\s*$/.test(trimmed) && result[result.length - 1] && result[result.length - 1].trim().length > 0) {
+            result[result.length - 1] = '## ' + result[result.length - 1].trim();
+            continue;
+        }
+
+        // Skip empty lines and list items
+        if (!trimmed || /^[-*•·]\s/.test(trimmed) || /^\d+[.)]\s/.test(trimmed)) {
+            result.push(line);
+            continue;
+        }
+
+        // ALL CAPS lines → heading (if short enough and not just an abbreviation)
+        if (trimmed.length >= 3 && trimmed.length < 80 &&
+            trimmed === trimmed.toUpperCase() &&
+            /[A-Z]{2,}/.test(trimmed) &&
+            !/^[^a-zA-Z]*$/.test(trimmed) && // not all symbols/numbers
+            !prev.trim()) { // preceded by blank line or start
+            // Convert to title case
+            const titleCase = trimmed.replace(/\w\S*/g, w =>
+                w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()
+            );
+            result.push('## ' + titleCase);
+            continue;
+        }
+
+        // Numbered section headers: "1.2 Introduction", "Chapter 3: Methods"
+        if (/^(\d+\.)+\d*\s+\S/.test(trimmed) && trimmed.length < 80 && !/[.!?]$/.test(trimmed)) {
+            if (!prev.trim() || i === 0) {
+                result.push('## ' + trimmed);
+                continue;
+            }
+        }
+        if (/^chapter\s+\d+/i.test(trimmed) && trimmed.length < 80) {
+            result.push('# ' + trimmed);
+            continue;
+        }
+
+        // Short lines surrounded by blank lines, no trailing punctuation → heading
+        if (trimmed.length > 0 && trimmed.length < 60 &&
+            !/[.!?,;:]$/.test(trimmed) &&
+            !prev.trim() &&
+            (!next.trim() || !next) &&
+            !/^[-*•·]\s/.test(trimmed) && !/^\d+[.)]\s/.test(trimmed)) {
+            result.push('## ' + trimmed);
+            continue;
+        }
+
+        result.push(line);
+    }
+
+    return result.join('\n');
+}
+
+// --- PDF Pass 5: Aggressive line merging ---
+function pdfMergeLines(text) {
+    const lines = text.split('\n');
+    const merged = [];
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const trimmed = line.trim();
+        const next = i < lines.length - 1 ? lines[i + 1] : null;
+        const trimmedNext = next ? next.trim() : '';
+
+        // Always push if no next line, or current line is empty
+        if (!next || !trimmed) {
             merged.push(line);
             continue;
         }
 
-        const trimmedLine = line.trim();
-        const trimmedNext = next.trim();
+        // Don't merge list items
+        if (/^[-*•·]\s/.test(trimmed) || /^\d+[.)]\s/.test(trimmed)) {
+            merged.push(line);
+            continue;
+        }
+        // Don't merge if next line is a list item
+        if (/^[-*•·]\s/.test(trimmedNext) || /^\d+[.)]\s/.test(trimmedNext)) {
+            merged.push(line);
+            continue;
+        }
 
-        if (/^[\s]*[-*•·]\s/.test(line) || /^[\s]*\d+[.)]\s/.test(line)) {
+        // Don't merge headings (lines starting with #)
+        if (/^#{1,6}\s/.test(trimmed) || /^#{1,6}\s/.test(trimmedNext)) {
             merged.push(line);
             continue;
         }
-        if (trimmedLine.length < 20) {
-            merged.push(line);
-            continue;
-        }
-        if (/^[A-Z]/.test(trimmedNext) && /[.!?:;]$/.test(trimmedLine)) {
-            merged.push(line);
-            continue;
-        }
+
+        // Don't merge if next line is empty
         if (!trimmedNext) {
             merged.push(line);
             continue;
         }
-        if (/[.!?]$/.test(trimmedLine)) {
+
+        // Current line very short — likely a heading or label, don't merge
+        if (trimmed.length < 20) {
             merged.push(line);
             continue;
         }
-        if (/^[a-z]/.test(trimmedNext)) {
-            merged.push(trimmedLine + ' ' + trimmedNext);
-            i++;
+
+        // Sentence ends + next starts uppercase = real paragraph break
+        if (/[.!?]$/.test(trimmed) && /^[A-Z]/.test(trimmedNext)) {
+            merged.push(line);
             continue;
         }
 
-        merged.push(line);
+        // Colon/semicolon at end + uppercase next = structural break
+        if (/[:;]$/.test(trimmed) && /^[A-Z]/.test(trimmedNext)) {
+            merged.push(line);
+            continue;
+        }
+
+        // Different indentation = structural break
+        const indent = (line.match(/^(\s*)/) || ['', ''])[1].length;
+        const nextIndent = (next.match(/^(\s*)/) || ['', ''])[1].length;
+        if (Math.abs(indent - nextIndent) > 2) {
+            merged.push(line);
+            continue;
+        }
+
+        // Otherwise: merge (this is the aggressive part — most single newlines are layout artifacts)
+        merged.push(trimmed + ' ' + trimmedNext);
+        i++; // skip next line since we consumed it
     }
 
-    r = merged.join('\n');
-    r = r.replace(/ {2,}/g, ' ');
-    return normalizeGeneral(r);
+    return merged.join('\n');
+}
+
+// --- PDF Pass 6: Table detection from whitespace-aligned columns ---
+function pdfDetectTables(text) {
+    const lines = text.split('\n');
+    const result = [];
+    let i = 0;
+
+    while (i < lines.length) {
+        // Look for blocks of lines with consistent multi-space separators
+        const tableLines = [];
+        let j = i;
+
+        while (j < lines.length) {
+            const line = lines[j];
+            const trimmed = line.trim();
+            if (!trimmed) {
+                if (tableLines.length > 0) break; // end of potential table block
+                j++;
+                continue;
+            }
+            // Check for 2+ columns separated by 2+ spaces
+            const parts = trimmed.split(/\s{2,}/).filter(p => p.trim());
+            if (parts.length >= 2) {
+                tableLines.push({ line: trimmed, parts, index: j });
+                j++;
+            } else {
+                break;
+            }
+        }
+
+        // Need at least 3 rows with consistent column count to be a table
+        if (tableLines.length >= 3) {
+            const colCounts = tableLines.map(t => t.parts.length);
+            const modeCount = colCounts.sort((a, b) =>
+                colCounts.filter(v => v === b).length - colCounts.filter(v => v === a).length
+            )[0];
+
+            // Check that most rows have the same column count
+            const consistent = tableLines.filter(t => t.parts.length === modeCount);
+            if (consistent.length >= tableLines.length * 0.7 && modeCount >= 2) {
+                // Build markdown table from consistent rows
+                const rows = consistent.map(t => {
+                    const cells = t.parts.slice(0, modeCount);
+                    while (cells.length < modeCount) cells.push('');
+                    return cells.map(c => c.replace(/\|/g, '\\|'));
+                });
+                result.push(buildMarkdownTable(rows));
+                i = j;
+                continue;
+            }
+        }
+
+        // Not a table — push the line as-is
+        result.push(lines[i]);
+        i++;
+    }
+
+    return result.join('\n');
 }
 
 function normalizeExcel(html, plain) {
@@ -1097,7 +1396,14 @@ function runPipeline() {
                 : normalizeGeneral(plain);
             break;
         case 'pdf':
-            intermediateMarkdown = normalizePDF(plain);
+            if (pastedHTML && hasSignificantHtml(pastedHTML)) {
+                // Browser PDF viewers sometimes produce structured HTML — use it
+                const cleaned = cleanEmailHtml(pastedHTML);
+                const md = htmlToMarkdown(cleaned);
+                intermediateMarkdown = normalizePDF(md, { fromHtml: true });
+            } else {
+                intermediateMarkdown = normalizePDF(plain);
+            }
             break;
         case 'excel':
             intermediateMarkdown = normalizeExcel(pastedHTML, plain);
