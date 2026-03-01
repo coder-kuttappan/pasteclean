@@ -18,10 +18,10 @@
     <meta name="twitter:description" content="Smart paste cleaner. Copy from anywhere, paste into the format you need.">
     <link rel="canonical" href="https://pasteclean.coderkuttappan.com">
     <meta name="google-site-verification" content="eNmP6IuKCpaQO_ytAbOWf5EhNzWJUzBv61nENES2N0s" />
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/turndown/dist/turndown.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/turndown-plugin-gfm/dist/turndown-plugin-gfm.js"></script>
+    <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js" integrity="sha384-948ahk4ZmxYVYOc+rxN1H2gM1EJ2Duhp7uHtZ4WSLkV4Vtx5MUqnV+l7u9B+jFv+" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/turndown@7.2.2/dist/turndown.js" integrity="sha384-y1uQowoOYeryxQzS1ggrU/3yu31Fcejfc70pzL+TsVoVINnG7UC6g7ch3kdvfiJF" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/turndown-plugin-gfm@1.0.2/dist/turndown-plugin-gfm.js" integrity="sha384-2TroN1N6OfLQ+K4qttptnIfMREzUlMa3hW/nZqDZXv7Sm9BkESfGEupDEqCbzyRl" crossorigin="anonymous"></script>
     <script>
         // Apply theme before paint to prevent flash
         (function() {
@@ -1241,6 +1241,19 @@ function formatMarkdown(md) {
     return { text: md, html: null, copyMode: 'text' };
 }
 
+function sanitizeHtml(html) {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    doc.querySelectorAll('script, iframe, object, embed, form, input, textarea, select, button').forEach(el => el.remove());
+    doc.querySelectorAll('*').forEach(el => {
+        for (const attr of [...el.attributes]) {
+            if (attr.name.startsWith('on') || (attr.name === 'href' && attr.value.trim().toLowerCase().startsWith('javascript:'))) {
+                el.removeAttribute(attr.name);
+            }
+        }
+    });
+    return doc.body.innerHTML;
+}
+
 function formatGmail(md) {
     let html = marked.parse(md, { breaks: false, gfm: true });
 
@@ -1484,7 +1497,7 @@ function renderOutput() {
     if (result.copyMode === 'rich') {
         outputText.classList.add('hidden');
         outputHtmlWrap.classList.remove('hidden');
-        outputHtml.innerHTML = formattedHTML;
+        outputHtml.innerHTML = sanitizeHtml(formattedHTML);
         hint.classList.remove('hidden');
         hint.textContent = `Preview \u2014 Copy puts formatted HTML on your clipboard for ${OUTPUT_LABELS[currentOutputMode]}.`;
         copyBtn.textContent = `Copy for ${OUTPUT_LABELS[currentOutputMode]}`;
